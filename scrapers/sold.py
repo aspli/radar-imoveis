@@ -12,7 +12,7 @@ def buscar_leiloes_sold_api(place_id, cidade, estado):
         f"&timeZoneId=America%2FSao_Paulo&searchType=opened"
         f"&filter=product.productType.description:imoveis;isShopping:false"
         f"&pageNumber=1&pageSize=50&orderBy=endDate:asc;price:desc"
-        f"&placeId={place_id}"
+        f"&placeId={place_id}&radius=100" 
         f"&fieldList=id;linkURL;price;endDate;product.shortDesc"
     )
     
