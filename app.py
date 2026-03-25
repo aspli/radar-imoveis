@@ -1,230 +1,177 @@
 import streamlit as st
 import pandas as pd
-import cloudscraper
-from bs4 import BeautifulSoup
-import time
 import os
+import time
 from dotenv import load_dotenv
-import unicodedata
-import scrapers
-from utils import analyze_ai
 
-# ==========================================
-# BASE DE DADOS DE PORTAIS (TEMPLATES)
-# ==========================================
-# Aqui você cadastra as URLs base. Use {estado} e {cidade} onde as variáveis devem entrar.
-BASE_PORTAIS = {
-    "Portal Zuk": "https://www.portalzuk.com.br/leilao-de-imoveis/{estado}/{cidade}",
-    "Mega Leilões": "https://www.megaleiloes.com.br/{estado}/{cidade}",
-    "Sodré Santoro": "https://www.sodresantoro.com.br/leilao/imoveis/{estado}/{cidade}/",
-    "Milan Leilões": "https://www.milanleiloes.com.br/imoveis/{estado}/{cidade}",
-    "Freitas Leiloeiro": "https://www.freitasleiloeiro.com.br/imoveis/{estado}/{cidade}"
-}
-
-def formatar_para_url(texto):
-    """
-    Remove acentos, cê-cedilha e troca espaços por traços.
-    Ex: 'São Paulo' -> 'sao-paulo' | 'Araçatuba' -> 'aracatuba'
-    """
-    # Remove os acentos usando a biblioteca nativa unicodedata
-    texto_limpo = ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
-    # Transforma em minúsculo e troca espaços por hífens
-    texto_limpo = texto_limpo.strip().lower().replace(' ', '-')
-    return texto_limpo
-
-def gerar_urls_dinamicas(estado, cidade):
-    """
-    Cruza o estado e a cidade com todos os templates da base de dados.
-    """
-    estado_url = formatar_para_url(estado)
-    cidade_url = formatar_para_url(cidade)
-    
-    lista_urls = []
-    
-    # Faz um loop pela nossa "base de dados" e injeta os nomes limpos na URL
-    for nome_portal, template in BASE_PORTAIS.items():
-        url_pronta = template.format(estado=estado_url, cidade=cidade_url)
-        lista_urls.append({"portal": nome_portal, "url": url_pronta})
-        
-    return lista_urls
-
-# Carrega as variáveis de ambiente do arquivo .env
+# Carrega a chave da API protegida
 load_dotenv()
 
 # ==========================================
-# A SOLUÇÃO DO ERRO (VARIÁVEL GLOBAL)
+# IMPORTAÇÃO DOS MÓDULOS (SUA ARQUITETURA)
 # ==========================================
-# Garante que a variável sempre exista. Se não tiver no .env, ela fica vazia ("").
+# Ferramentas
+from utils.analyze_ai import analisar_com_ia
+# Mini-Robôs
+from scrapers.zuk import buscar_portal_zuk
+from scrapers.sold import buscar_leiloes_sold_api
+from scrapers.leilaoimovel import buscar_leilao_imovel_html
+
+# ==========================================
+# DICIONÁRIO DE MAPEAMENTO (DE-PARA)
+# ==========================================
+# Dica de Engenharia: No futuro, você pode mover isso para o utils/url_treatment.py
+MAPEAMENTO_CIDADES = {
+    "Araçatuba": {
+        "ibge": "3502804", 
+        "sold_place_id": "ChIJAfGqendElpQRJx0Kzs-iseg"
+    },
+    "São Paulo": {
+        "ibge": "3550308", 
+        "sold_place_id": "ChIJ0WGkg4FEzpQRrlsz_whLqZs"
+    }
+}
+
+# ==========================================
+# CONFIGURAÇÃO DA TELA
+# ==========================================
+st.set_page_config(page_title="Radar de Leilões", page_icon="🏢", layout="wide")
+st.title("🏢 Radar de Leilões Inteligente")
+st.markdown("Orquestrador Multi-Portais com Inteligência Artificial.")
+
+# Garantia de que a chave da IA existe
 api_key = os.getenv("GEMINI_API_KEY", "")
 
 # ==========================================
-# CONFIGURAÇÃO DA PÁGINA STREAMLIT
-# ==========================================
-st.set_page_config(page_title="Radar de Leilões", page_icon="🏢", layout="wide")
-
-st.title("🏢 Radar de Leilões Inteligente")
-st.markdown("Busca **REAL** no Portal Zuk e análise visual de editais com IA.")
-
-# ==========================================
-# BARRA LATERAL (SIDEBAR) - CONTROLES
+# BARRA LATERAL (CONTROLES)
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ Configurações")
-    
-    # Agora a lógica só verifica se a variável (já criada lá em cima) tem texto dentro
+    st.header("⚙️ Configurações do Sistema")
     if api_key:
-        st.success("✅ IA Conectada (Chave do arquivo .env)")
+        st.success("✅ IA Conectada (Chave .env)")
     else:
-        api_key = st.text_input("Chave da API do Google (Gemini)", type="password")
-        if not api_key:
-            st.warning("Insira a chave da API para análise automática.")
-    
-    st.markdown("---")
-    st.header("🔍 Link da Busca")
-    url_busca_zuk = st.text_input(
-        "Cole a URL de busca do Portal Zuk", 
-        value="https://www.portalzuk.com.br/leilao-de-imoveis/c/todos-imoveis/sp/interior/aracatuba"
-    )
-    buscar_btn = st.button("🚀 Iniciar Varredura Real", use_container_width=True)
-
-# ==========================================
-# MÓDULO DE EXTRAÇÃO REAL (CLOUDSCRAPER)
-# ==========================================
-def buscar_leiloes_reais_zuk(url_busca):
-    scraper = cloudscraper.create_scraper() 
-    try:
-        response = scraper.get(url_busca, timeout=20)
-        if response.status_code != 200:
-            st.error(f"Erro ao acessar a página. Código: {response.status_code}")
-            return pd.DataFrame()
-            
-        soup = BeautifulSoup(response.text, 'html.parser')
-        links = soup.find_all('a', href=True)
-        urls_imoveis = []
+        st.error("❌ Chave API não encontrada no .env")
+        api_key = st.text_input("Insira a chave Gemini", type="password")
         
-        for link in links:
-            href = link['href']
-            if ('/imovel/' in href or '/leilao/' in href) and len(href) > 20:
-                url_completa = f"https://www.portalzuk.com.br{href}" if href.startswith('/') else href
-                urls_imoveis.append(url_completa)
-                
-        urls_imoveis = list(set(urls_imoveis))
-        if not urls_imoveis:
-            st.warning("O robô não encontrou links de imóveis na página.")
-            return pd.DataFrame()
-            
-        dados = []
-        for url_imovel in urls_imoveis[:5]: # LIMITADO A 5 para testes
-            try:
-                res_imovel = scraper.get(url_imovel, timeout=15)
-                soup_imovel = BeautifulSoup(res_imovel.text, 'html.parser')
-                texto_pagina = soup_imovel.get_text(separator=' ', strip=True)
-                codigo = url_imovel.split('-')[-1]
-                
-                partes_url = url_imovel.split('/')
-                estado_extraido = partes_url[4].upper() if len(partes_url) > 4 else "SP"
-                cidade_extraida = partes_url[5].replace('-', ' ').title() if len(partes_url) > 5 else "Cidade"
-                
-                tipo = "Apartamento" if "apartamento" in texto_pagina.lower() else "Casa/Outro"
-                if "terreno" in texto_pagina.lower(): tipo = "Terreno"
-                
-                dados.append({
-                    "lote": codigo, "tipo": tipo, "estado": estado_extraido, "cidade": cidade_extraida,
-                    "url": url_imovel, "valor_2_praca": "Consultar site", 
-                    "data_encerramento": "Extração IA", "descricao": texto_pagina
-                })
-                time.sleep(1)
-            except Exception:
-                continue
-        return pd.DataFrame(dados)
-    except Exception as e:
-        st.error(f"Erro na conexão com o CloudScraper: {e}")
-        return pd.DataFrame()
+    st.markdown("---")
+    st.header("🔍 Critérios de Busca")
+    
+    estado_alvo = st.selectbox("Estado", ["SP", "GO", "MG", "RJ", "PR", "SC", "RS", "DF"])
+    # Convertido para selectbox para garantir que bate com o nosso dicionário
+    cidade_alvo = st.selectbox("Cidade", ["Araçatuba", "São Paulo"]) 
+    
+    buscar_btn = st.button("🚀 Iniciar Varredura Global", use_container_width=True)
 
 # ==========================================
-# LÓGICA PRINCIPAL DO APP E FRONT-END VISUAL
+# MOTOR DO ORQUESTRADOR
 # ==========================================
 if buscar_btn:
-    with st.spinner("Varrendo página de resultados..."):
-        df_real = buscar_leiloes_reais_zuk(url_busca_zuk)
-        
-    if df_real.empty:
-        st.warning("Nenhum leilão válido foi encontrado nesta URL ou a conexão falhou.")
+    lista_de_tabelas = []
+    dados_cidade = MAPEAMENTO_CIDADES.get(cidade_alvo, {})
+    
+    st.markdown("---")
+    st.markdown("### 📡 Status da Extração")
+    
+    # 1. ACIONA ROBÔ ZUK
+    with st.spinner("Robô Zuk: Lendo HTML via Cloudscraper..."):
+        df_zuk = buscar_portal_zuk(estado_alvo, cidade_alvo)
+        if not df_zuk.empty:
+            lista_de_tabelas.append(df_zuk)
+            st.success(f"✅ Zuk: {len(df_zuk)} imóveis encontrados.")
+        else:
+            st.warning("⚠️ Zuk: Nenhum imóvel encontrado ou bloqueio.")
+            
+    # 2. ACIONA ROBÔ SOLD (API)
+    place_id = dados_cidade.get("sold_place_id")
+    if place_id:
+        with st.spinner("Robô Sold: Conectando à API Oculta..."):
+            df_sold = buscar_leiloes_sold_api(place_id, cidade_alvo, estado_alvo)
+            if not df_sold.empty:
+                lista_de_tabelas.append(df_sold)
+                st.success(f"✅ Sold: {len(df_sold)} imóveis encontrados.")
+            else:
+                st.warning("⚠️ Sold: Nenhum imóvel na API.")
+                
+    # 3. ACIONA ROBÔ LEILÃO IMÓVEL (HTML Dinâmico)
+    ibge_id = dados_cidade.get("ibge")
+    if ibge_id:
+        with st.spinner("Robô Leilão Imóvel: Varrendo sistema tradicional..."):
+            df_li = buscar_leilao_imovel_html(ibge_id, cidade_alvo, estado_alvo)
+            if not df_li.empty:
+                lista_de_tabelas.append(df_li)
+                st.success(f"✅ Leilão Imóvel: {len(df_li)} imóveis encontrados.")
+            else:
+                st.warning("⚠️ Leilão Imóvel: Nenhum imóvel encontrado.")
+
+    # ==========================================
+    # JUNÇÃO E ANÁLISE DE IA
+    # ==========================================
+    if not lista_de_tabelas:
+        st.error("🚨 Nenhum dos robôs conseguiu encontrar imóveis para esta região.")
     else:
-        st.success(f"Encontrados {len(df_real)} imóveis ativos! Analisando os editais...")
+        # A Mágica do Pandas: Junta todas as tabelas em uma só!
+        df_final = pd.concat(lista_de_tabelas, ignore_index=True)
+        
+        st.markdown("---")
+        st.markdown(f"### 🧠 Analisando {len(df_final)} Editais com IA")
         
         pareceres_estruturados = []
         barra_progresso = st.progress(0)
         
-        for contador, row in df_real.iterrows():
+        for contador, row in df_final.iterrows():
             with st.spinner(f"Extraindo prós e contras do lote {row['lote']}..."):
-                analise_dict = analyze_ai(row['descricao'], api_key)
+                analise_dict = analisar_com_ia(row['descricao'], api_key)
                 pareceres_estruturados.append(analise_dict)
-                barra_progresso.progress((contador + 1) / len(df_real))
-                time.sleep(5)
                 
-        df_real['Analise_JSON'] = pareceres_estruturados
+                # Freio de mão para não estourar a API gratuita do Google
+                time.sleep(4) 
+                barra_progresso.progress((contador + 1) / len(df_final))
+                
+        df_final['Analise_JSON'] = pareceres_estruturados
         
+        # ==========================================
+        # RENDERIZAÇÃO DO PAINEL TÁTICO
+        # ==========================================
         st.markdown("---")
-        
-        # NOVO: Checkbox para Ocultar Ciladas
         col_titulo, col_filtro = st.columns([2, 1])
         with col_titulo:
             st.markdown("### 📋 Painel Tático de Oportunidades")
         with col_filtro:
-            ocultar_vermelhos = st.checkbox("🟢 Mostrar Apenas Oportunidades (Ocultar Vermelhos)")
-        
-        # Renderização Visual
-        for index, row in df_real.iterrows():
-            dados_ia = row.get('Analise_JSON', {})
+            ocultar_vermelhos = st.checkbox("🟢 Mostrar Apenas Oportunidades")
             
-            # Mais uma camada de segurança
-            if not isinstance(dados_ia, dict):
-                dados_ia = {} 
+        for index, row in df_final.iterrows():
+            dados_ia = row.get('Analise_JSON', {})
+            if not isinstance(dados_ia, dict): dados_ia = {} 
                 
             status_ia = str(dados_ia.get('status', 'ERRO')).upper()
-            
-            # Lógica do filtro: pula o card inteiro se for vermelho ou erro
             if ocultar_vermelhos and status_ia in ["VERMELHO", "ERRO"]:
                 continue
             
             icone_status = "🟢" if status_ia == "VERDE" else "🟡" if status_ia == "AMARELO" else "🔴"
-            tipo_ia = dados_ia.get('tipo_imovel', 'Imóvel Não Identificado')
-            resumo_ia = dados_ia.get('resumo', 'Resumo indisponível.')
-            pontos_fav = dados_ia.get('favoraveis', [])
-            pontos_crit = dados_ia.get('criticos', [])
+            tipo_ia = dados_ia.get('tipo_imovel', 'Imóvel')
             
-            with st.expander(f"{icone_status} {tipo_ia} - Ref: {row['lote']} | {row['cidade']}/{row['estado']}"):
-                st.markdown(f"**Veredito:** {resumo_ia}")
-                st.markdown(f"[🔗 Acessar Página Original do Imóvel no Leiloeiro]({row['url']})")
+            # Repare que agora mostramos qual portal trouxe o imóvel!
+            origem = "Sold" if "sold.com" in row['url'] else "Zuk" if "portalzuk" in row['url'] else "Leilão Imóvel"
+            
+            with st.expander(f"{icone_status} {tipo_ia} - Ref: {row['lote']} | {row['cidade']}/{row['estado']} | Fonte: {origem}"):
+                st.markdown(f"**Veredito:** {dados_ia.get('resumo', 'Resumo indisponível.')}")
+                st.markdown(f"[🔗 Acessar Página no {origem}]({row['url']})")
                 st.write("") 
                 
                 col_positiva, col_negativa = st.columns(2)
                 with col_positiva:
                     st.success("👍 **Pontos Favoráveis**")
+                    pontos_fav = dados_ia.get('favoraveis', [])
                     if isinstance(pontos_fav, list) and pontos_fav:
-                        for ponto in pontos_fav:
-                            st.write(f"- {ponto}")
+                        for ponto in pontos_fav: st.write(f"- {ponto}")
                     else:
                         st.write("- Nenhum ponto favorável.")
                         
                 with col_negativa:
                     st.error("🚨 **Pontos Críticos (Atenção)**")
+                    pontos_crit = dados_ia.get('criticos', [])
                     if isinstance(pontos_crit, list) and pontos_crit:
-                        for ponto in pontos_crit:
-                            st.write(f"- {ponto}")
+                        for ponto in pontos_crit: st.write(f"- {ponto}")
                     else:
                         st.write("- Nenhum risco encontrado.")
-        
-        st.markdown("---")
-        
-        # Exportação Segura para CSV
-        df_export = df_real.copy()
-        df_export['Resumo_IA'] = df_export['Analise_JSON'].apply(lambda x: x.get('resumo', '') if isinstance(x, dict) else '')
-        df_export['Favoraveis'] = df_export['Analise_JSON'].apply(lambda x: ", ".join(x.get('favoraveis', [])) if isinstance(x, dict) and isinstance(x.get('favoraveis'), list) else '')
-        df_export['Criticos'] = df_export['Analise_JSON'].apply(lambda x: ", ".join(x.get('criticos', [])) if isinstance(x, dict) and isinstance(x.get('criticos'), list) else '')
-        
-        df_csv = df_export[['lote', 'tipo', 'estado', 'cidade', 'url', 'Resumo_IA', 'Favoraveis', 'Criticos']]
-        csv = df_csv.to_csv(index=False).encode('utf-8')
-        
-        st.download_button("📥 Baixar Planilha", data=csv, file_name='leiloes_analisados.csv', mime='text/csv')
+                        
