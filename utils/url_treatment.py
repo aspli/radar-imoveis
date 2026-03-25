@@ -1,9 +1,6 @@
 import unicodedata
 import urllib.parse
 
-# ==========================================
-# 1. FUNÇÕES DE TRATAMENTO DE TEXTO
-# ==========================================
 def remover_acentos(texto):
     """Remove acentos (São Paulo -> Sao Paulo)"""
     return ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
@@ -45,7 +42,7 @@ MAPEAMENTO_ESTADOS = {
 # ==========================================
 # 3. O MOTOR GERADOR DE URLs EXCLUSIVAS
 # ==========================================
-def compor_urls_dinamicas(estado, cidade):
+def compose_urls(estado, cidade):
     urls_geradas = {}
     
     # Prepara as variáveis de texto
@@ -90,12 +87,12 @@ def compor_urls_dinamicas(estado, cidade):
 # 4. TESTANDO O CÓDIGO
 # ==========================================
 print("=== GERANDO URLs PARA ARAÇATUBA ===")
-urls_aracatuba = compor_urls_dinamicas("SP", "Araçatuba")
+urls_aracatuba = compose_urls("SP", "Araçatuba")
 for site, link in urls_aracatuba.items():
     print(f"{site}: {link}")
 
 print("\n=== GERANDO URLs PARA SÃO PAULO ===")
-urls_sp = compor_urls_dinamicas("SP", "São Paulo")
+urls_sp = compose_urls("SP", "São Paulo")
 for site, link in urls_sp.items():
     print(f"{site}: {link}")
     
