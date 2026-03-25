@@ -11,7 +11,7 @@ load_dotenv()
 # IMPORTAÇÃO DOS MÓDULOS (SUA ARQUITETURA)
 # ==========================================
 # Ferramentas
-from utils.analyze_ai import analisar_com_ia
+from utils.analyze_ai import analyze_ai
 # Mini-Robôs
 from scrapers.zuk import buscar_portal_zuk
 from scrapers.sold import buscar_leiloes_sold_api
@@ -120,7 +120,7 @@ if buscar_btn:
         
         for contador, row in df_final.iterrows():
             with st.spinner(f"Extraindo prós e contras do lote {row['lote']}..."):
-                analise_dict = analisar_com_ia(row['descricao'], api_key)
+                analise_dict = analyze_ai(row['descricao'], api_key)
                 pareceres_estruturados.append(analise_dict)
                 
                 # Freio de mão para não estourar a API gratuita do Google
