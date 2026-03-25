@@ -3,24 +3,30 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import unicodedata
+import re
 
 def formatar_slug(texto):
-    """Remove acentos e espaços para montar a URL (Ex: São Paulo -> sao-paulo)"""
+    """Remove acentos e espaços para montar a URL (Ex: Araçatuba -> aracatuba)"""
     texto_limpo = ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
     return texto_limpo.strip().lower().replace(' ', '-')
 
 def buscar_mega_leiloes(estado, cidade):
     """
-    Mini-robô especialista no Mega Leilões.
-    Varre o HTML tradicional usando Cloudscraper.
+    Mini-robô do Mega Leilões.
     """
-    scraper = cloudscraper.create_scraper()
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        }
+    )
     
     estado_lower = estado.lower()
     cidade_slug = formatar_slug(cidade)
     
-    # Montando a URL base no padrão do site
-    url_busca = f"https://www.megaleiloes.com.br/imoveis/{estado_lower}/{cidade_slug}?pagina=1"
+    # A SUA DESCOBERTA APLICADA AQUI: Retiramos o "/imoveis/" da URL de busca!
+    url_busca = f"https://www.megaleiloes.com.br/{estado_lower}/{cidade_slug}?pagina=1"
     
     try:
         response = scraper.get(url_busca, timeout=20)
@@ -30,14 +36,14 @@ def buscar_mega_leiloes(estado, cidade):
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Caçando todos os links da página de resultados
+        # Caçando os links dos imóveis
         links = soup.find_all('a', href=True)
         urls_imoveis = []
         
         for link in links:
             href = link['href']
-            # O Mega Leilões costuma ter "/imoveis/" ou "/leilao/" no link do lote
-            if ('/imoveis/' in href or 'leilao' in href) and len(href) > 30:
+            # Filtro Sniper: Tem que ter "/imoveis/" no link do lote e ser uma URL longa
+            if '/imoveis/' in href and len(href) > 40:
                 url_completa = href if href.startswith('http') else f"https://www.megaleiloes.com.br{href}"
                 urls_imoveis.append(url_completa)
                 
@@ -48,16 +54,14 @@ def buscar_mega_leiloes(estado, cidade):
             return pd.DataFrame()
             
         dados = []
-        # Limitado a 5 imóveis para testes rápidos
-        for url_imovel in urls_imoveis[:5]:
+        for url_imovel in urls_imoveis[:5]: # Trazendo no máximo 5 para ser rápido
             try:
                 res_imovel = scraper.get(url_imovel, timeout=15)
                 soup_imovel = BeautifulSoup(res_imovel.text, 'html.parser')
                 
-                # Pega todo o texto da página do lote para a IA ler
                 texto_pagina = soup_imovel.get_text(separator=' ', strip=True)
                 
-                # O código do lote no Mega Leilões geralmente fica no final da URL (ex: -j12345)
+                # Pega o ID no final da URL (Ex: -j12345)
                 codigo = url_imovel.split('-')[-1]
                 
                 dados.append({
