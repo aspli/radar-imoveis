@@ -16,6 +16,7 @@ from utils.analyze_ai import analyze_ai
 from scrapers.zuk import buscar_portal_zuk
 from scrapers.sold import buscar_leiloes_sold_api
 from scrapers.leilaoimovel import buscar_leilao_imovel_html
+from scrapers.megaleiloes import buscar_mega_leiloes
 
 # ==========================================
 # DICIONÁRIO DE MAPEAMENTO (DE-PARA)
@@ -102,6 +103,15 @@ if buscar_btn:
                 st.success(f"✅ Leilão Imóvel: {len(df_li)} imóveis encontrados.")
             else:
                 st.warning("⚠️ Leilão Imóvel: Nenhum imóvel encontrado.")
+    
+    # 4. ACIONA ROBÔ MEGA LEILÕES
+    with st.spinner("Robô Mega Leilões: Varrendo HTML base..."):
+        df_mega = buscar_mega_leiloes(estado_alvo, cidade_alvo)
+        if not df_mega.empty:
+            lista_de_tabelas.append(df_mega)
+            st.success(f"✅ Mega Leilões: {len(df_mega)} imóveis encontrados.")
+        else:
+            st.warning("⚠️ Mega Leilões: Nenhum imóvel encontrado.")
 
     # ==========================================
     # JUNÇÃO E ANÁLISE DE IA
@@ -151,7 +161,7 @@ if buscar_btn:
             tipo_ia = dados_ia.get('tipo_imovel', 'Imóvel')
             
             # Repare que agora mostramos qual portal trouxe o imóvel!
-            origem = "Sold" if "sold.com" in row['url'] else "Zuk" if "portalzuk" in row['url'] else "Leilão Imóvel"
+            origem = "Sold" if "sold.com" in row['url'] else "Zuk" if "portalzuk" in row['url'] else "Mega Leilões" if "megaleiloes" in row['url'] else "Leilão Imóvel"
             
             with st.expander(f"{icone_status} {tipo_ia} - Ref: {row['lote']} | {row['cidade']}/{row['estado']} | Fonte: {origem}"):
                 st.markdown(f"**Veredito:** {dados_ia.get('resumo', 'Resumo indisponível.')}")
