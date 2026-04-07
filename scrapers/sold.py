@@ -72,8 +72,10 @@ def buscar_leiloes_sold_api(place_id, cidade, estado):
             
             # A MÁGICA DA URL:
             # O Python limpa a descrição e junta com o código do imóvel
+            # A MÁGICA DA URL (AGORA NA NAVE-MÃE):
+            # Trocamos sold.com.br por superbid.net para englobar todos os parceiros
             slug_imovel = criar_slug_url(descricao)
-            link_imovel = f"https://www.sold.com.br/oferta/{slug_imovel}-{codigo}"
+            link_imovel = f"https://www.superbid.net/oferta/{slug_imovel}-{codigo}"
             
             dados.append({
                 "lote": codigo, 
