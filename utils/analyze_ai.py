@@ -1,69 +1,74 @@
-import google.generativeai as genai
 import json
+import time
+from groq import Groq
 
-def analisar_oportunidade_gemini(api_key, descricao, valor, cidade, tipo_imovel):
+def analisar_oportunidade_ia(api_key, descricao, valor, cidade, tipo_imovel):
     """
-    Passa os dados rasgados pelo robô para a IA do Google Gemini.
-    O Prompt exige uma resposta em JSON estrito para fácil integração com o Streamlit.
+    Analisa o edital usando Llama 3.1 8B.
+    Inclui compressão de texto (limitando a 3500 caracteres) para não estourar a cota de Tokens!
     """
-    # Configura a chave da API
-    genai.configure(api_key=api_key)
     
-    # Usamos o modelo Gemini 1.5 Flash: Ele é extremamente rápido para ler textos 
-    # longos (editais) e perfeito para tarefas de processamento em lote.
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    max_tentativas = 3
     
-    # O PROMPT MESTRE (Engenharia de Prompt Nível Sênior)
-    prompt = f"""
-    Você é um Analista Sênior de Investimentos em Leilões Imobiliários no Brasil.
-    Sua tarefa é analisar os dados extraídos de um anúncio/edital de leilão e fornecer um parecer rápido, frio e focado em lucro e mitigação de riscos.
-
-    DADOS DO IMÓVEL:
-    - Cidade: {cidade}
-    - Tipo: {tipo_imovel}
-    - Valor Atual (R$): {valor}
-    - Descrição/Edital: {descricao}
-
-    INSTRUÇÕES DE ANÁLISE:
-    1. Modalidade: Identifique se é Judicial (envolve Varas, processos, varas cíveis, penhora) ou Extrajudicial (Alienação fiduciária, bancos como Itaú, Bradesco, Santander).
-    2. Ocupação: Procure indícios se está "Ocupado" ou "Desocupado". Se não mencionar, assuma "Não informado (Risco de Ocupação)".
-    3. Risco Oculto: Identifique dívidas de IPTU, condomínio ou pendências averbadas na matrícula mencionadas no texto.
-    4. Nota de Oportunidade (0 a 10): Baseada no tipo de leilão e na clareza das informações. (Leilões extrajudiciais de bancos tendem a ter nota maior por menor risco jurídico; leilões judiciais com muita dívida têm nota menor).
-
-    RETORNO OBRIGATÓRIO (Responda APENAS com um JSON válido, sem usar formatação Markdown como ```json, apenas o texto do objeto):
-    {{
-        "modalidade": "Judicial ou Extrajudicial",
-        "ocupacao": "Ocupado, Desocupado ou Não informado",
-        "alertas_risco": "Resumo de 1 linha de possíveis dívidas ou rolos jurídicos",
-        "nota": 8.5,
-        "parecer_estrategico": "Frase de até 20 palavras dizendo se vale a pena analisar o edital completo ou fugir."
-    }}
-    """
-
-    try:
-        # Pede para a IA gerar o conteúdo
-        response = model.generate_content(prompt)
-        texto_limpo = response.text.strip()
-        
-        # Limpeza de segurança caso a IA ainda teime em mandar blocos de código Markdown
-        if texto_limpo.startswith("```json"):
-            texto_limpo = texto_limpo[7:]
-        if texto_limpo.startswith("```"):
-            texto_limpo = texto_limpo[3:]
-        if texto_limpo.endswith("```"):
-            texto_limpo = texto_limpo[:-3]
+    # A MÁGICA DA ENGENHARIA DE DADOS: A Dieta de Tokens
+    # Cortamos a descrição para os primeiros 3500 caracteres. Salva 80% do seu limite diário!
+    descricao_segura = str(descricao)[:3500] if descricao else "Sem descrição."
+    
+    for tentativa in range(max_tentativas):
+        try:
+            client = Groq(api_key=api_key)
             
-        # Converte o texto gerado pela IA em um Dicionário Python real
-        analise_json = json.loads(texto_limpo.strip())
-        return analise_json
-        
-    except Exception as e:
-        # Se a IA falhar (timeout ou não gerar JSON), retorna um dicionário padrão de fallback
-        print(f"Erro na IA: {e}")
-        return {
-            "modalidade": "Análise Indisponível",
-            "ocupacao": "Desconhecido",
-            "alertas_risco": "Falha ao processar com a IA.",
-            "nota": 0.0,
-            "parecer_estrategico": "Verifique manualmente."
-        }
+            prompt = f"""Você é um Analista Sênior de Investimentos em Leilões Imobiliários no Brasil.
+            Sua tarefa é analisar os dados extraídos de um anúncio/edital de leilão e fornecer um parecer focado em lucro e riscos.
+
+            DADOS DO IMÓVEL:
+            - Cidade: {cidade}
+            - Tipo: {tipo_imovel}
+            - Valor Atual (R$): {valor}
+            - Descrição/Edital: {descricao_segura}
+
+            INSTRUÇÕES DE ANÁLISE:
+            1. Modalidade: Identifique se é Judicial (envolve processos) ou Extrajudicial (Bancos).
+            2. Ocupação: Procure indícios se está "Ocupado" ou "Desocupado". Se não achar, ponha "Não informado".
+            3. Risco Oculto: Identifique dívidas de IPTU, condomínio ou pendências averbadas.
+            4. Nota de Oportunidade (0 a 10): Baseada no tipo de leilão e na clareza das informações.
+
+            RETORNO OBRIGATÓRIO EM JSON:
+            {{
+                "modalidade": "Judicial ou Extrajudicial",
+                "ocupacao": "Ocupado, Desocupado ou Não informado",
+                "alertas_risco": "Resumo de 1 linha de possíveis dívidas",
+                "nota": 8.5,
+                "parecer_estrategico": "Frase de até 20 palavras."
+            }}"""
+            
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Você responde APENAS em JSON válido."},
+                    {"role": "user", "content": prompt}
+                ],
+                # Mudamos para a versão 8B: Limites muito maiores e processamento relâmpago
+                model="llama-3.1-8b-instant", 
+                temperature=0.1, 
+                response_format={"type": "json_object"} 
+            )
+            
+            texto_resposta = chat_completion.choices[0].message.content
+            return json.loads(texto_resposta)
+            
+        except Exception as e:
+            erro_str = str(e)
+            if ("429" in erro_str or "503" in erro_str) and tentativa < max_tentativas - 1:
+                tempo_espera = 5 * (tentativa + 1) 
+                print(f"⚠️ Groq ocupada (Tentativa {tentativa + 1}/{max_tentativas}). Aguardando {tempo_espera}s...")
+                time.sleep(tempo_espera)
+                continue 
+            else:
+                print(f"❌ Erro definitivo na IA: {erro_str}")
+                return {
+                    "modalidade": "Erro na Análise",
+                    "ocupacao": "Desconhecido",
+                    "alertas_risco": "Limite de tokens ou falha de conexão.",
+                    "nota": 0.0,
+                    "parecer_estrategico": "Verifique o edital manualmente."
+                }
